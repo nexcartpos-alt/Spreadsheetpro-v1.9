@@ -65,8 +65,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "$TAG" SpreadsheetPro.jar --clobber
-          if [ -f "resources/icon.ico" ]; then
-            gh release upload "$TAG" resources/icon.ico --clobber
+          if [ -f "resources/dict/icon.ico" ]; then
+            gh release upload "$TAG" resources/dict/icon.ico --clobber
           fi
 
   bundle:
@@ -113,8 +113,8 @@ jobs:
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             ICON_FLAG=""
-            if [ -f "resources/icon.ico" ]; then
-              ICON_FLAG="--icon resources/icon.ico"
+            if [ -f "resources/dict/icon.ico" ]; then
+              ICON_FLAG="--icon resources/dict/icon.ico"
             fi
             jpackage --type exe --name "Spreadsheet Pro" --app-version "${{ steps.ver.outputs.version }}" \
               --input input --main-jar SpreadsheetPro.jar --main-class SpreadsheetApp \

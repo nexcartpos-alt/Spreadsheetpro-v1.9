@@ -1,9 +1,5 @@
 name: Build downloads
 
-# Runs by itself when you push a version tag (git tag v1.2.0 && git push --tags) or publish a GitHub Release,
-# and can also be started by hand from the Actions tab.
-# It creates the release if it does not exist, builds the .jar plus ready-to-run apps with Java bundled inside
-# for Windows, macOS and Linux, and attaches them. Spreadsheet Pro then tells its users that the update is out.
 on:
   push:
     tags:
@@ -13,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to attach the files to (the release must already exist)'
+        description: 'Release tag to attach the files to'
         required: true
         default: 'v1.1.0'
 
@@ -23,7 +19,6 @@ permissions:
 env:
   TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
 
-# a tag push and a published release can both fire for the same version: only one run needs to finish
 concurrency:
   group: build-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
   cancel-in-progress: true
@@ -50,6 +45,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+
       - name: Build the jar
         run: |
           V="${TAG#v}"
@@ -57,15 +53,21 @@ jobs:
           javac --release 11 -encoding UTF-8 -d out *.java
           printf 'Main-Class: SpreadsheetApp\nImplementation-Version: %s\n' "$V" > manifest.txt
           jar cfm SpreadsheetPro.jar manifest.txt -C out . -C resources .
+
       - uses: actions/upload-artifact@v4
         with:
           name: jar
           path: SpreadsheetPro.jar
-      - name: Attach to the release
+
+      - name: Attach jar and icon to the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "$TAG" SpreadsheetPro.jar --clobber
+        run: |
+          gh release upload "$TAG" SpreadsheetPro.jar --clobber
+          if [ -f "resources/icon.ico" ]; then
+            gh release upload "$TAG" resources/icon.ico --clobber
+          fi
 
   bundle:
     name: App with Java inside (${{ matrix.label }})
@@ -87,45 +89,64 @@ jobs:
     defaults:
       run:
         shell: bash
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
+
       - uses: actions/download-artifact@v4
         with:
           name: jar
           path: input
+
       - name: Work out the version number
         id: ver
         run: |
           V="${TAG#v}"
           if ! [[ "$V" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then V="1.0.0"; fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
+
       - name: Build the app (Java is bundled, nothing to install)
         run: |
-          jpackage --type app-image --name "Spreadsheet Pro" --app-version "${{ steps.ver.outputs.version }}" \
-            --input input --main-jar SpreadsheetPro.jar --main-class SpreadsheetApp \
-            --add-modules java.base,java.desktop,java.prefs,java.logging,java.xml,java.naming,jdk.crypto.ec \
-            --dest dist
-      - name: Zip it
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            ICON_FLAG=""
+            if [ -f "resources/icon.ico" ]; then
+              ICON_FLAG="--icon resources/icon.ico"
+            fi
+            jpackage --type exe --name "Spreadsheet Pro" --app-version "${{ steps.ver.outputs.version }}" \
+              --input input --main-jar SpreadsheetPro.jar --main-class SpreadsheetApp \
+              --add-modules java.base,java.desktop,java.prefs,java.logging,java.xml,java.naming,jdk.crypto.ec \
+              --win-dir-chooser --win-menu --win-shortcut $ICON_FLAG \
+              --dest dist
+          else
+            jpackage --type app-image --name "Spreadsheet Pro" --app-version "${{ steps.ver.outputs.version }}" \
+              --input input --main-jar SpreadsheetPro.jar --main-class SpreadsheetApp \
+              --add-modules java.base,java.desktop,java.prefs,java.logging,java.xml,java.naming,jdk.crypto.ec \
+              --dest dist
+          fi
+
+      - name: Package or rename the output
         run: |
           cd dist
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             tar -czf "../${{ matrix.asset }}.tar.gz" .
             echo "FILE=${{ matrix.asset }}.tar.gz" >> "$GITHUB_ENV"
           elif [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a -tzip "../${{ matrix.asset }}.zip" . > /dev/null
-            echo "FILE=${{ matrix.asset }}.zip" >> "$GITHUB_ENV"
+            mv *.exe "../${{ matrix.asset }}-Setup.exe"
+            echo "FILE=${{ matrix.asset }}-Setup.exe" >> "$GITHUB_ENV"
           else
             ditto -c -k --keepParent "Spreadsheet Pro.app" "../${{ matrix.asset }}.zip"
             echo "FILE=${{ matrix.asset }}.zip" >> "$GITHUB_ENV"
           fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
           path: ${{ env.FILE }}
+
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
